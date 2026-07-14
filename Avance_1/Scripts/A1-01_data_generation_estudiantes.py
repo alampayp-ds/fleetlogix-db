@@ -176,9 +176,12 @@ class DataGenerator:
             num_routes = 3 if origin == 'Bogotá' or destination == 'Bogotá' else 2
             weighted_pairs.extend([(origin, destination)] * num_routes)
 
+        # La combinatoria de ciudades no garantiza llegar a `count` (con 5 ciudades
+        # da 48, no 50): si faltan, se completa con pares aleatorios adicionales
         while len(weighted_pairs) < count:
             weighted_pairs.append(random.choice(pairs))
 
+        # Si sobraran, mezclar antes de recortar para no perder siempre los mismos pares
         random.shuffle(weighted_pairs)
         weighted_pairs = weighted_pairs[:count]
 
@@ -481,6 +484,7 @@ class DataGenerator:
 
         maintenance_records = []
 
+        # 1) Asignación base: ~1 mantenimiento cada 20 viajes, distribuido en el período de operación
         for vehicle_id, trip_count, first_trip, last_trip in usable_vehicles:
             num_maintenance = max(1, trip_count // 20)
             operation_days = (last_trip - first_trip).days
@@ -490,7 +494,10 @@ class DataGenerator:
                 maintenance_date = (first_trip + timedelta(days=days_offset)).date()
                 maintenance_records.append(make_record(vehicle_id, maintenance_date))
 
-        
+        # 2) La división entera por vehículo siempre pierde el resto (ej. 555 viajes -> 27,
+        #    se pierden 15), así que el total natural queda por debajo de `count`.
+        #    Se completa con registros extra, repartidos con más probabilidad entre los
+        #    vehículos con más viajes (misma lógica de "cada ~20 viajes").
         if usable_vehicles:
             weights = [trip_count for _, trip_count, _, _ in usable_vehicles]
             while len(maintenance_records) < count:
@@ -502,6 +509,7 @@ class DataGenerator:
                 maintenance_date = (first_trip + timedelta(days=days_offset)).date()
                 maintenance_records.append(make_record(vehicle_id, maintenance_date))
 
+        # 3) Si por algún motivo sobraran (no debería, dado el punto 2), mezclar y recortar
         random.shuffle(maintenance_records)
         maintenance_records = maintenance_records[:count]
 
