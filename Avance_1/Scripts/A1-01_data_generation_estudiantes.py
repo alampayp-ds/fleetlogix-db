@@ -159,55 +159,55 @@ class DataGenerator:
         logging.info(f" {count} conductores insertados")
     
     def generate_routes(self, count=50):
-        """Generar 50 rutas entre las 5 ciudades principales"""
+        """Generar rutas entre las ciudades principales, ajustando dinámicamente al total pedido"""
         logging.info(f"Generando {count} rutas...")
-        
+
+        # Todos los pares origen-destino válidos (origen != destino)
+        pairs = [
+            (origin, destination)
+            for origin in self.cities
+            for destination in self.cities
+            if origin != destination
+        ]
+
+        # Pares que involucran Bogotá llevan más rutas (peso de negocio)
+        weighted_pairs = []
+        for origin, destination in pairs:
+            num_routes = 3 if origin == 'Bogotá' or destination == 'Bogotá' else 2
+            weighted_pairs.extend([(origin, destination)] * num_routes)
+
+        while len(weighted_pairs) < count:
+            weighted_pairs.append(random.choice(pairs))
+
+        random.shuffle(weighted_pairs)
+        weighted_pairs = weighted_pairs[:count]
+
         routes = []
-        route_counter = 1
-        
-        # Generar rutas entre todas las combinaciones de ciudades
-        for origin in self.cities:
-            for destination in self.cities:
-                if origin != destination:
-                    # Múltiples rutas entre ciudades principales
-                    num_routes = 3 if origin == 'Bogotá' or destination == 'Bogotá' else 2
-                    
-                    for i in range(num_routes):
-                        route_code = f"R{str(route_counter).zfill(3)}"
-                        
-                        # Distancias aproximadas entre ciudades colombianas
-                        base_distance = self._get_distance(origin, destination)
-                        distance = base_distance + random.uniform(-50, 50)
-                        
-                        # Tiempo estimado (60-80 km/h promedio)
-                        avg_speed = random.uniform(60, 80)
-                        duration = distance / avg_speed
-                        
-                        # Peajes basados en distancia
-                        toll_cost = int(distance / 100) * 15000  # 15k pesos por cada 100km
-                        
-                        routes.append((
-                            route_code,
-                            origin,
-                            destination,
-                            round(distance, 2),
-                            round(duration, 2),
-                            toll_cost
-                        ))
-                        
-                        route_counter += 1
-                        if route_counter > count:
-                            break
-                    
-                    if route_counter > count:
-                        break
-            
-            if route_counter > count:
-                break
-        
-        # Ajustar para tener exactamente 50 rutas
-        routes = routes[:count]
-        
+        for route_counter, (origin, destination) in enumerate(weighted_pairs, start=1):
+            route_code = f"R{str(route_counter).zfill(3)}"
+
+            # Distancias aproximadas entre ciudades colombianas
+            base_distance = self._get_distance(origin, destination)
+            distance = base_distance + random.uniform(-50, 50)
+
+            # Tiempo estimado (60-80 km/h promedio)
+            avg_speed = random.uniform(60, 80)
+            duration = distance / avg_speed
+
+            # Peajes basados en distancia
+            toll_cost = int(distance / 100) * 15000  # 15k pesos por cada 100km
+
+            routes.append((
+                route_code,
+                origin,
+                destination,
+                round(distance, 2),
+                round(duration, 2),
+                toll_cost
+            ))
+
+        assert len(routes) == count, f"Se esperaban {count} rutas, se generaron {len(routes)}"
+
         query = """
             INSERT INTO routes (route_code, origin_city, destination_city, 
                               distance_km, estimated_duration_hours, toll_cost)
@@ -345,66 +345,66 @@ class DataGenerator:
         
         deliveries = []
         delivery_counter = 0
-        
-        # Distribuir entregas entre los viajes
-        for trip_id, departure, arrival, total_weight, city in tqdm(trips_data, desc="Generando deliveries"):
-            # Número de entregas para este viaje (2-6, promedio 4)
-            num_deliveries = np.random.choice([2, 3, 4, 5, 6], p=[0.1, 0.2, 0.4, 0.2, 0.1])
-            
-            # Peso por entrega
-            weights = self._distribute_weight(float(total_weight), num_deliveries)
-            #weights = self._distribute_weight(total_weight, num_deliveries)
-            
-            # Tiempo entre entregas
+
+        def make_delivery(trip_id, departure, arrival, city, package_weight):
+            nonlocal delivery_counter
+            delivery_counter += 1
+            tracking_number = f"FL{datetime.now().year}{str(delivery_counter).zfill(8)}"
+            customer_name = fake.name()
+            delivery_address = f"{fake.street_address()}, {city}"
+
+            # Horario programado y real
+            scheduled = departure + timedelta(hours=random.uniform(0.5, 4))
+
             if arrival:
-                delivery_duration = (arrival - departure).total_seconds() / 3600
-                time_per_delivery = delivery_duration / num_deliveries
-            else:
-                time_per_delivery = 0.5  # 30 minutos promedio
-            
-            for i in range(num_deliveries):
-                tracking_number = f"FL{datetime.now().year}{str(delivery_counter+1).zfill(8)}"
-                customer_name = fake.name()
-                delivery_address = f"{fake.street_address()}, {city}"
-                package_weight = float(weights[i])
-                
-                # Horario programado y real
-                scheduled = departure + timedelta(hours=time_per_delivery * (i + 0.5))
-                
-                if arrival:
-                    # 90% entregados a tiempo, 10% con retraso
-                    if random.random() < 0.9:
-                        delivered = scheduled + timedelta(minutes=random.randint(-30, 30))
-                    else:
-                        delivered = scheduled + timedelta(minutes=random.randint(60, 180))
-                    
-                    delivery_status = 'delivered'
-                    signature = random.random() < 0.95  # 95% con firma
+                # 90% entregados a tiempo, 10% con retraso
+                if random.random() < 0.9:
+                    delivered = scheduled + timedelta(minutes=random.randint(-30, 30))
                 else:
-                    delivered = None
-                    delivery_status = 'pending'
-                    signature = False
-                
-                deliveries.append((
-                    trip_id,
-                    tracking_number,
-                    customer_name,
-                    delivery_address,
-                    round(package_weight, 2),
-                    scheduled,
-                    delivered,
-                    delivery_status,
-                    signature
-                ))
-                
-                delivery_counter += 1
-                
-                if delivery_counter > count:
-                    break
-            
-            if delivery_counter > count:
-                break
-        
+                    delivered = scheduled + timedelta(minutes=random.randint(60, 180))
+
+                delivery_status = 'delivered'
+                signature = random.random() < 0.95  # 95% con firma
+            else:
+                delivered = None
+                delivery_status = 'pending'
+                signature = False
+
+            return (
+                trip_id,
+                tracking_number,
+                customer_name,
+                delivery_address,
+                round(float(package_weight), 2),
+                scheduled,
+                delivered,
+                delivery_status,
+                signature
+            )
+
+        # 1) Distribuir entregas entre los viajes (2-6, promedio 4) sin cortar a mitad de viaje
+        for trip_id, departure, arrival, total_weight, city in tqdm(trips_data, desc="Generando deliveries"):
+            num_deliveries = np.random.choice([2, 3, 4, 5, 6], p=[0.1, 0.2, 0.4, 0.2, 0.1])
+            weights = self._distribute_weight(float(total_weight), num_deliveries)
+
+            for i in range(num_deliveries):
+                deliveries.append(make_delivery(trip_id, departure, arrival, city, weights[i]))
+
+        # 2) El promedio (4 por viaje) fluctúa por el componente aleatorio, así que el total
+        #    natural rara vez cae justo en `count`. Se completa o recorta para llegar exacto.
+        if len(deliveries) < count:
+            while len(deliveries) < count:
+                trip_id, departure, arrival, total_weight, city = random.choice(trips_data)
+                package_weight = self._distribute_weight(float(total_weight), 1)[0]
+                deliveries.append(make_delivery(trip_id, departure, arrival, city, package_weight))
+        elif len(deliveries) > count:
+            random.shuffle(deliveries)
+            deliveries = deliveries[:count]
+
+        assert len(deliveries) == count, (
+            f"Se esperaban {count} entregas, se generaron {len(deliveries)}"
+        )
+
         # Insertar en batches
         query = """
             INSERT INTO deliveries (trip_id, tracking_number, customer_name,
@@ -436,9 +436,9 @@ class DataGenerator:
         return weights
     
     def generate_maintenance(self, count=5000):
-        """Generar 5000 registros de mantenimiento"""
+        """Generar exactamente `count` registros de mantenimiento (proporción ~1 cada 20 viajes)"""
         logging.info(f"Generando {count} registros de mantenimiento...")
-        
+
         # Obtener información de vehículos y sus viajes
         self.cursor.execute("""
             SELECT vehicles.vehicle_id, vehicle_type, COUNT(trip_id), MIN(departure_datetime), MAX(departure_datetime) 
@@ -446,7 +446,7 @@ class DataGenerator:
             GROUP BY vehicles.vehicle_id, vehicle_type
         """)
         vehicle_stats = self.cursor.fetchall()
-        
+
         maintenance_types = [
             ('Cambio de aceite', 150000, 30),
             ('Revisión de frenos', 250000, 60),
@@ -455,61 +455,71 @@ class DataGenerator:
             ('Revisión de motor', 500000, 60),
             ('Alineación y balanceo', 180000, 30)
         ]
-        
+
+        def make_record(vehicle_id, maintenance_date):
+            maint_type, base_cost, days_next = random.choice(maintenance_types)
+            cost = base_cost * random.uniform(0.8, 1.2)
+            description = f"{maint_type} programado para {maintenance_date.strftime('%Y-%m-%d')}"
+            next_maintenance = maintenance_date + timedelta(days=days_next)
+            performed_by = f"{fake.first_name()} {fake.last_name()}"
+            return (
+                vehicle_id,
+                maintenance_date,
+                maint_type,
+                description,
+                round(cost, 2),
+                next_maintenance,
+                performed_by
+            )
+
+        # Solo vehículos con historial de viajes utilizable
+        usable_vehicles = [
+            (vehicle_id, trip_count, first_trip, last_trip)
+            for vehicle_id, vehicle_type, trip_count, first_trip, last_trip in vehicle_stats
+            if first_trip and last_trip
+        ]
+
         maintenance_records = []
-        
-        for vehicle_id, vehicle_type, trip_count, first_trip, last_trip in vehicle_stats:
-            # Número de mantenimientos basado en viajes (cada ~20 viajes)
+
+        for vehicle_id, trip_count, first_trip, last_trip in usable_vehicles:
             num_maintenance = max(1, trip_count // 20)
-            
-            if first_trip and last_trip:
-                # Distribuir mantenimientos en el período de operación
-                operation_days = (last_trip - first_trip).days
-                
-                for i in range(min(num_maintenance, count - len(maintenance_records))):
-                    # Fecha de mantenimiento distribuida
-                    days_offset = int(operation_days * (i + 1) / (num_maintenance + 1))
-                    maintenance_date = (first_trip + timedelta(days=days_offset)).date()
-                    
-                    # Tipo de mantenimiento
-                    maint_type, base_cost, days_next = random.choice(maintenance_types)
-                    
-                    # Costo con variación
-                    cost = base_cost * random.uniform(0.8, 1.2)
-                    
-                    # Descripción
-                    description = f"{maint_type} programado para {maintenance_date.strftime('%Y-%m-%d')}"
-                    
-                    # Próximo mantenimiento
-                    next_maintenance = maintenance_date + timedelta(days=days_next)
-                    
-                    # Técnico
-                    performed_by = f"{fake.first_name()} {fake.last_name()}"
-                    
-                    maintenance_records.append((
-                        vehicle_id,
-                        maintenance_date,
-                        maint_type,
-                        description,
-                        round(cost, 2),
-                        next_maintenance,
-                        performed_by
-                    ))
-                    
-                    if len(maintenance_records) >= count:
-                        break
+            operation_days = (last_trip - first_trip).days
+
+            for i in range(num_maintenance):
+                days_offset = int(operation_days * (i + 1) / (num_maintenance + 1)) if operation_days > 0 else 0
+                maintenance_date = (first_trip + timedelta(days=days_offset)).date()
+                maintenance_records.append(make_record(vehicle_id, maintenance_date))
+
         
+        if usable_vehicles:
+            weights = [trip_count for _, trip_count, _, _ in usable_vehicles]
+            while len(maintenance_records) < count:
+                vehicle_id, trip_count, first_trip, last_trip = random.choices(
+                    usable_vehicles, weights=weights
+                )[0]
+                operation_days = (last_trip - first_trip).days
+                days_offset = random.randint(0, operation_days) if operation_days > 0 else 0
+                maintenance_date = (first_trip + timedelta(days=days_offset)).date()
+                maintenance_records.append(make_record(vehicle_id, maintenance_date))
+
+        random.shuffle(maintenance_records)
+        maintenance_records = maintenance_records[:count]
+
+        assert len(maintenance_records) == count, (
+            f"Se esperaban {count} mantenimientos, se generaron {len(maintenance_records)}"
+        )
+
         # Insertar en batch
         query = """
             INSERT INTO maintenance (vehicle_id, maintenance_date, maintenance_type,
                                    description, cost, next_maintenance_date, performed_by)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
-        
-        execute_batch(self.cursor, query, maintenance_records[:count], page_size=100)
+
+        execute_batch(self.cursor, query, maintenance_records, page_size=100)
         self.connection.commit()
-        self.counters['maintenance'] = min(len(maintenance_records), count)
-        logging.info(f" {self.counters['maintenance']} mantenimientos insertados")
+        self.counters['maintenance'] = count
+        logging.info(f" {count} mantenimientos insertados")
     
     def validate_data_quality(self):
         """Validar integridad y calidad de datos"""
