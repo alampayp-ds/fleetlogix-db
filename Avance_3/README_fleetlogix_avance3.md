@@ -118,7 +118,7 @@ Capturas tomadas directamente en Snowsight sobre la base `FLEETLOGIX_DW`, schema
 
 Catalog → `FLEETLOGIX_DW` → `ANALYTICS` → Tables, mostrando las 7 tablas del modelo estrella (`FACT_DELIVERIES` + las 6 `DIM_*`) más `DAILY_TOTALS`.
 
-![Árbol de tablas en Snowsight](images/01_arbol_tablas.png)
+![Árbol de tablas en Snowsight](01_arbol_tablas.png)
 
 > También aparece `STAGING_DAILY_LOAD`, remanente de la primera implementación de SCD Type 2 (descartada y reemplazada por `_update_scd2_driver`/`_update_scd2_vehicle`, ver sección 2 — Load). No forma parte del modelo final.
 
@@ -130,7 +130,7 @@ SELECT * FROM fact_deliveries LIMIT 10;
 
 10 filas devueltas en 414ms, con las FKs a las dimensiones, las métricas base (`PACKAGE_WEIGHT_KG`, `DISTANCE_KM`, `FUEL_CONSUMED_LITERS`) y las calculadas (`DELIVERIES_PER_HOUR`, `FUEL_EFFICIENCY_KM_PER_LITER`, `COST_PER_DELIVERY`, `REVENUE_PER_DELIVERY`) visibles — confirma que la tabla tiene datos reales, no solo estructura vacía.
 
-![fact_deliveries con datos](images/02_fact_deliveries.png)
+![fact_deliveries con datos](02_fact_deliveries.png)
 
 ### 4.3 SCD Type 2 — estructura poblada en `dim_driver`
 
@@ -141,7 +141,7 @@ ORDER BY driver_id, valid_from
 LIMIT 20;
 ```
 
-![dim_driver con columnas SCD2](images/03_dim_driver_scd2.png)
+![dim_driver con columnas SCD2](03_dim_driver_scd2.png)
 
 Los 20 conductores muestran la estructura completa de SCD Type 2 (`VALID_FROM`, `VALID_TO`, `IS_CURRENT`), todos como alta inicial (`IS_CURRENT = TRUE`, `VALID_TO = 9999-12-31`). Se verificó adicionalmente que **ningún** `driver_id` tiene más de una versión en toda la tabla:
 
@@ -165,7 +165,7 @@ GROUP BY driver_id
 HAVING COUNT(*) <> 1;
 ```
 
-![Validación SCD2 sin resultados](images/04_validacion_scd2.png)
+![Validación SCD2 sin resultados](04_validacion_scd2.png)
 
 **0 filas devueltas** — el resultado vacío es la evidencia positiva: ningún conductor tiene cero o más de una versión vigente al mismo tiempo. Integridad confirmada.
 
@@ -175,7 +175,7 @@ HAVING COUNT(*) <> 1;
 SELECT * FROM daily_totals ORDER BY batch_id DESC LIMIT 5;
 ```
 
-![daily_totals de la corrida de referencia](images/05_daily_totals.png)
+![daily_totals de la corrida de referencia](05_daily_totals.png)
 
 Coincide exactamente con los números documentados en la sección 3: batch `1785085310`, fecha `2026-07-26`, 311 entregas, $73.452.540,00 de revenue, $33.724.140,78 de costo, 32,43 min de tiempo promedio de entrega, 82,96% de puntualidad y 21.215,91 L de combustible total.
 
@@ -185,7 +185,7 @@ Coincide exactamente con los números documentados en la sección 3: batch `1785
 SHOW TABLES LIKE 'FACT_DELIVERIES';
 ```
 
-![retention_time = 30](images/06_time_travel.png)
+![retention_time = 30](06_time_travel.png)
 
 `retention_time = 30`, confirmando que `fact_deliveries` quedó configurada con `DATA_RETENTION_TIME_IN_DAYS = 30` como se documenta en la sección 1.
 
