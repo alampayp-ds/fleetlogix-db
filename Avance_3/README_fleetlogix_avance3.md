@@ -110,8 +110,91 @@ Se filtra por `delivered_datetime` (cuándo se completó la entrega) y no por `s
 
 ---
 
+## 4. Data Warehouse operativo en Snowflake — evidencia
+
+Capturas tomadas directamente en Snowsight sobre la base `FLEETLOGIX_DW`, schema `ANALYTICS`, que confirman que el modelo dimensional está desplegado y poblado con datos reales de la corrida de referencia.
+
+### 4.1 Estructura del modelo — árbol de tablas
+
+Catalog → `FLEETLOGIX_DW` → `ANALYTICS` → Tables, mostrando las 7 tablas del modelo estrella (`FACT_DELIVERIES` + las 6 `DIM_*`) más `DAILY_TOTALS`.
+
+![Árbol de tablas en Snowsight](images/01_arbol_tablas.png)
+
+> También aparece `STAGING_DAILY_LOAD`, remanente de la primera implementación de SCD Type 2 (descartada y reemplazada por `_update_scd2_driver`/`_update_scd2_vehicle`, ver sección 2 — Load). No forma parte del modelo final.
+
+### 4.2 Tabla de hechos con datos
+
+```sql
+SELECT * FROM fact_deliveries LIMIT 10;
+```
+
+10 filas devueltas en 414ms, con las FKs a las dimensiones, las métricas base (`PACKAGE_WEIGHT_KG`, `DISTANCE_KM`, `FUEL_CONSUMED_LITERS`) y las calculadas (`DELIVERIES_PER_HOUR`, `FUEL_EFFICIENCY_KM_PER_LITER`, `COST_PER_DELIVERY`, `REVENUE_PER_DELIVERY`) visibles — confirma que la tabla tiene datos reales, no solo estructura vacía.
+
+![fact_deliveries con datos](images/02_fact_deliveries.png)
+
+### 4.3 SCD Type 2 — estructura poblada en `dim_driver`
+
+```sql
+SELECT driver_key, driver_id, full_name, status, valid_from, valid_to, is_current
+FROM dim_driver
+ORDER BY driver_id, valid_from
+LIMIT 20;
+```
+
+![dim_driver con columnas SCD2](images/03_dim_driver_scd2.png)
+
+Los 20 conductores muestran la estructura completa de SCD Type 2 (`VALID_FROM`, `VALID_TO`, `IS_CURRENT`), todos como alta inicial (`IS_CURRENT = TRUE`, `VALID_TO = 9999-12-31`). Se verificó adicionalmente que **ningún** `driver_id` tiene más de una versión en toda la tabla:
+
+```sql
+SELECT driver_id, COUNT(*) AS versiones
+FROM dim_driver
+GROUP BY driver_id
+HAVING COUNT(*) > 1;
+-- 0 filas
+```
+
+Esto es consistente con lo documentado: la corrida de referencia fue una única ejecución limpia (batch `1785085310`), por lo que el mecanismo de cierre de versión (`valid_to`, `is_current = FALSE` en `_update_scd2_driver`/`_update_scd2_vehicle`) está implementado y probado, pero no fue ejercitado por falta de una segunda corrida con atributos modificados.
+
+### 4.4 Validación de integridad del SCD Type 2
+
+```sql
+SELECT driver_id, COUNT(*) AS versiones_vigentes
+FROM dim_driver
+WHERE is_current = TRUE
+GROUP BY driver_id
+HAVING COUNT(*) <> 1;
+```
+
+![Validación SCD2 sin resultados](images/04_validacion_scd2.png)
+
+**0 filas devueltas** — el resultado vacío es la evidencia positiva: ningún conductor tiene cero o más de una versión vigente al mismo tiempo. Integridad confirmada.
+
+### 4.5 Totales pre-calculados (`daily_totals`)
+
+```sql
+SELECT * FROM daily_totals ORDER BY batch_id DESC LIMIT 5;
+```
+
+![daily_totals de la corrida de referencia](images/05_daily_totals.png)
+
+Coincide exactamente con los números documentados en la sección 3: batch `1785085310`, fecha `2026-07-26`, 311 entregas, $73.452.540,00 de revenue, $33.724.140,78 de costo, 32,43 min de tiempo promedio de entrega, 82,96% de puntualidad y 21.215,91 L de combustible total.
+
+### 4.6 Time Travel
+
+```sql
+SHOW TABLES LIKE 'FACT_DELIVERIES';
+```
+
+![retention_time = 30](images/06_time_travel.png)
+
+`retention_time = 30`, confirmando que `fact_deliveries` quedó configurada con `DATA_RETENTION_TIME_IN_DAYS = 30` como se documenta en la sección 1.
+
+---
+
 ## ⚠️ Decisiones y limitaciones a tener en cuenta
 
 | Tema | Detalle |
 |---|---|
-| Fecha de extracción en pruebas | Se usó una fecha fija (`2026-06-01`) en vez de `CURRENT_DATE - 1` para poder probar contra datos sintéticos ya existentes (rango real: jul-2024 a jun-2026). El script queda con `CURRENT_DATE - 1` para producción; corrido hoy sin datos reales de "ayer", extraería 0 registros | `dim_customer` | No implementa SCD Type 2 (el schema no tiene columnas de historial para esta dimensión) — solo detecta y da de alta clientes nuevos. |
+| Fecha de extracción en pruebas | Se usó una fecha fija (`2026-06-01`) en vez de `CURRENT_DATE - 1` para poder probar contra datos sintéticos ya existentes (rango real: jul-2024 a jun-2026). El script queda con `CURRENT_DATE - 1` para producción; corrido hoy sin datos reales de "ayer", extraería 0 registros. |
+| `dim_customer` | No implementa SCD Type 2 (el schema no tiene columnas de historial para esta dimensión) — solo detecta y da de alta clientes nuevos. |
+| Historial SCD Type 2 no ejercitado | `dim_driver` y `dim_vehicle` tienen la lógica de versionado implementada y validada (integridad correcta), pero todas las filas actuales son alta inicial, ya que solo se corrió el pipeline una vez contra la corrida de referencia. Un historial con múltiples versiones por entidad requeriría una segunda corrida con atributos modificados. |
